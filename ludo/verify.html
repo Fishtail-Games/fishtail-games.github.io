@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ludo Dice Checker</title>
+<meta name="description" content="Check that every dice roll in a game of Ludo - The Clean One came from the secret key fixed before the game began.">
+<style>
+  :root { color-scheme: light dark; --ink: #222; --bg: #fdfcfa; --muted: #666; --line: #ddd8cf; --field: #fff; --good: #1e7a3c; --bad: #b3261e; --link: #2d6bf6; }
+  @media (prefers-color-scheme: dark) { :root { --ink: #e8e6e3; --bg: #191817; --muted: #a7a39d; --line: #3a3835; --field: #22211f; --good: #6fd08c; --bad: #ff8a80; --link: #7db8f7; } }
+  body { font-family: Georgia, 'Times New Roman', serif; max-width: 720px; margin: 0 auto; padding: 2rem 1rem 4rem; line-height: 1.65; color: var(--ink); background: var(--bg); }
+  h1 { font-size: 2rem; margin-bottom: .25rem; }
+  h2 { font-size: 1.25rem; margin-top: 2rem; }
+  a { color: var(--link); }
+  label { display: block; font-weight: bold; margin-top: 1rem; }
+  .hint { color: var(--muted); font-size: .9rem; margin: 0; }
+  textarea, input { box-sizing: border-box; width: 100%; font: 14px/1.4 ui-monospace, Menlo, Consolas, monospace; color: var(--ink); background: var(--field);
+    border: 1px solid var(--line); border-radius: 6px; padding: .5rem; overflow-wrap: anywhere; }
+  textarea { min-height: 5.5rem; resize: vertical; }
+  button { margin-top: 1.25rem; font: inherit; font-weight: bold; padding: .6rem 1.4rem; border-radius: 8px; border: 0; background: #ffc43d; color: #211e38; cursor: pointer; }
+  #result { margin-top: 1.5rem; }
+  .ok { color: var(--good); font-weight: bold; }
+  .fail { color: var(--bad); font-weight: bold; }
+  table { border-collapse: collapse; margin-top: .75rem; }
+  th, td { border: 1px solid var(--line); padding: .25rem .7rem; text-align: center; }
+  pre { overflow-x: auto; background: var(--field); border: 1px solid var(--line); border-radius: 6px; padding: .75rem; font-size: 13px; line-height: 1.45; }
+  code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .9em; }
+</style>
+</head>
+<body>
+<h1>Ludo dice checker</h1>
+<p>Before the first roll, <em>Ludo - The Clean One</em> picks a secret key that decides every roll of the game, and shows its
+fingerprint. After the game it reveals the key. This page recomputes every roll from the key with code that is not part of the
+game, so you don't have to trust the game's own check.</p>
+<p class="hint">In the game: after a game, tap <strong>Check the dice</strong>, then <strong>Share the rolls</strong>. The link it
+shares fills this page in. Nothing you enter here is sent anywhere; the check runs in your browser.</p>
+
+<label for="fingerprint">Fingerprint, shown before the first roll</label>
+<input id="fingerprint" autocomplete="off" spellcheck="false" placeholder="64 letters and digits">
+<label for="key">Secret key, revealed after the game</label>
+<input id="key" autocomplete="off" spellcheck="false" placeholder="64 letters and digits">
+<label for="rolls">All the rolls, in order</label>
+<p class="hint">Digits 1 to 6. Spaces, commas and line breaks are ignored.</p>
+<textarea id="rolls" spellcheck="false"></textarea>
+<button id="check" type="button">Check every roll</button>
+<div id="result" aria-live="polite"></div>
+
+<h2>How the rolls are made</h2>
+<p>The secret key is 32 random bytes. Its fingerprint is the SHA-256 hash of those bytes, written in hex. Roll number
+<code>i</code> (counting from 0, every player's rolls in the order they happened) is worked out like this:</p>
+<ol>
+  <li>Hash the key followed by <code>i</code> and a round number <code>r</code> (starting at 0), each as 4 bytes, most
+  significant byte first: <code>SHA-256(key || i || r)</code>.</li>
+  <li>Take the first byte of the hash that is below 252, and the roll is that byte <code>mod 6</code>, plus 1. Using only
+  bytes below 252 (6 &times; 42) keeps every face exactly equally likely.</li>
+  <li>If no byte is below 252 (it almost never happens), add 1 to <code>r</code> and hash again.</li>
+</ol>
+<p>The same in a few lines of Python, if you'd rather check with your own code:</p>
+<pre>import hashlib
+
+def roll(key_hex, i):
+    key = bytes.fromhex(key_hex)
+    r = 0
+    while True:
+        h = hashlib.sha256(key + i.to_bytes(4, "big") + r.to_bytes(4, "big")).digest()
+        for b in h:
+            if b &lt; 252:
+                return b % 6 + 1
+        r += 1
+
+def check(fingerprint, key_hex, rolls):
+    assert hashlib.sha256(bytes.fromhex(key_hex)).hexdigest() == fingerprint.lower()
+    assert all(roll(key_hex, i) == int(d) for i, d in enumerate(rolls))</pre>
+<p>Because the fingerprint is shown before the first roll, the key can't be swapped for a different one during the game:
+no other key has the same fingerprint.</p>
+<p><a href="../">Fishtail Apps</a></p>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+
+  function fromHex(hex) {
+    if (!/^[0-9a-f]+$/.test(hex) || hex.length % 2) return null;
+    var bytes = new Uint8Array(hex.length / 2);
+    for (var i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+    return bytes;
+  }
+
+  function toHex(buffer) {
+    return Array.prototype.map.call(new Uint8Array(buffer), function (b) { return ("0" + b.toString(16)).slice(-2); }).join("");
+  }
+
+  function sha256(bytes) { return crypto.subtle.digest("SHA-256", bytes); }
+
+  // Mirrors FairDice.RollAt in the game.
+  async function rollAt(key, index) {
+    var input = new Uint8Array(key.length + 8);
+    input.set(key, 0);
+    var view = new DataView(input.buffer);
+    view.setUint32(key.length, index, false);
+    for (var round = 0; ; round++) {
+      view.setUint32(key.length + 4, round, false);
+      var hash = new Uint8Array(await sha256(input));
+      for (var j = 0; j < hash.length; j++) if (hash[j] < 252) return hash[j] % 6 + 1;
+    }
+  }
+
+  function show(html) { $("result").innerHTML = html; }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+
+  async function check() {
+    var fingerprint = $("fingerprint").value.trim().toLowerCase();
+    var keyHex = $("key").value.trim().toLowerCase();
+    var rolls = $("rolls").value.replace(/[^0-9]/g, "");
+    if (!window.crypto || !crypto.subtle) return show('<p class="fail">This browser can\'t compute SHA-256 here. Try a current browser over https.</p>');
+    var key = fromHex(keyHex);
+    if (!key || key.length !== 32) return show('<p class="fail">The secret key should be 64 hex characters (0-9, a-f).</p>');
+    if (!/^[0-9a-f]{64}$/.test(fingerprint)) return show('<p class="fail">The fingerprint should be 64 hex characters (0-9, a-f).</p>');
+    if (/[^1-6]/.test(rolls)) return show('<p class="fail">Rolls can only be the digits 1 to 6.</p>');
+
+    var actual = toHex(await sha256(key));
+    if (actual !== fingerprint) {
+      return show('<p class="fail">The key doesn\'t match the fingerprint.</p><p>SHA-256 of this key is <code>' + esc(actual) +
+        '</code>, but the fingerprint shown before the game was <code>' + esc(fingerprint) + '</code>.</p>');
+    }
+
+    var counts = [0, 0, 0, 0, 0, 0, 0];
+    for (var i = 0; i < rolls.length; i++) {
+      var expected = await rollAt(key, i);
+      if (expected !== Number(rolls[i])) {
+        return show('<p class="ok">The key matches the fingerprint.</p><p class="fail">Roll ' + (i + 1) + ' doesn\'t match: the key gives ' +
+          expected + ', but the list says ' + esc(rolls[i]) + '. The ' + i + ' rolls before it match.</p>');
+      }
+      counts[expected]++;
+    }
+    var rows = "";
+    for (var f = 1; f <= 6; f++) {
+      var share = rolls.length ? (100 * counts[f] / rolls.length).toFixed(1) + "%" : "-";
+      rows += "<tr><td>" + f + "</td><td>" + counts[f] + "</td><td>" + share + "</td></tr>";
+    }
+    show('<p class="ok">All ' + rolls.length + ' rolls match the key, and the key matches the fingerprint shown before the game.</p>' +
+      '<table><thead><tr><th>Face</th><th>Rolls</th><th>Share</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+      '<p class="hint">Fair dice land on each face about 16.7% of the time; over one game the shares wander around that.</p>');
+  }
+
+  // A shared link carries the record after the #, so it never reaches a server: #k=<key>&c=<fingerprint>&r=<rolls>
+  var params = new URLSearchParams(location.hash.slice(1));
+  if (params.get("c")) $("fingerprint").value = params.get("c");
+  if (params.get("k")) $("key").value = params.get("k");
+  if (params.get("r")) $("rolls").value = params.get("r");
+  $("check").addEventListener("click", function () { check().catch(function (e) { show('<p class="fail">' + esc(e.message) + "</p>"); }); });
+  if (params.get("k") && params.get("c")) $("check").click();
+})();
+</script>
+</body>
+</html>
